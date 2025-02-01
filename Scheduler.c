@@ -1,110 +1,99 @@
-#include <stdint.h>
 #include <stdio.h>
-#include <limits.h>
+#include <stdint.h>
+#include <signal.h>
+#include <time.h>
+#include <unistd.h>
+#include <stdlib.h>
 
-#define MAX_TASKS UCHAR_MAX
+#define MAX_TASKS 5
 
-// Task states
-typedef enum 
-{
+typedef enum {
     TASK_READY,
     TASK_RUNNING,
     TASK_SUSPENDED
-
 } task_state_t;
 
-// Task Control Block structure
-typedef struct
-{
-    uint32_t *stack_pointer;    // Placeholder for stack pointer (not used here)
-    uint8_t priority;           // Priority of the task (lower value = higher priority)
-    task_state_t state;         // Current state of the task
-    void (*task_func)(void);    // Function pointer to the task's main function
-
+typedef struct {
+    uint8_t priority;
+    task_state_t state;
+    void (*task_func)(void);
 } tcb_t;
 
-tcb_t task_list[MAX_TASKS];     // Array of task control blocks
-uint8_t task_index = NULL;         // Index of the next task to be added   
+tcb_t task_list[MAX_TASKS];
+uint8_t task_index = 0;
+timer_t timer_id;
+int current_task = 0;
 
-// Initialize the scheduler
-void init_scheduler() 
-{
-    for (int i = NULL; i < MAX_TASKS; i++) 
-    {
-        task_list[i].state = TASK_SUSPENDED;    // Set all tasks to suspended initially
-    }
+// Task functions
+void task1() { {printf("Task 1 running (Priority: %d)\n", task_list[current_task].priority); } }
+void task2() { {printf("Task 2 running (Priority: %d)\n", task_list[current_task].priority); } }
+void task3() { {printf("Task 3 running (Priority: %d)\n", task_list[current_task].priority); } }
 
+// Comparator function for sorting tasks by priority
+int compare_tasks(const void *a, const void *b) {
+    return ((tcb_t *)a)->priority - ((tcb_t *)b)->priority; // Lower priority value = higher priority
 }
 
-// Add a task to the scheduler
-void add_task(void (*task_func)(void), uint8_t priority) 
-{
-    if (task_index < MAX_TASKS) 
-    {
+// Scheduler function called by the timer
+void scheduler(int sig) {
+    if (sig == SIGALRM) {
+        if (task_index == 0) return; // No tasks to run
+
+        // Run the current task
+        task_list[current_task].state = TASK_RUNNING;
+        task_list[current_task].task_func();
+        task_list[current_task].state = TASK_READY;
+
+        // Move to the next task in sorted order
+        current_task = (current_task + 1) % task_index;
+    }
+}
+
+// Function to start POSIX timer
+void start_timer(int time_ms) {
+    struct sigevent sev;
+    struct itimerspec its;
+
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo = SIGALRM;
+    timer_create(CLOCK_REALTIME, &sev, &timer_id);
+
+    its.it_value.tv_sec = time_ms / 1000;
+    its.it_value.tv_nsec = (time_ms % 1000) * 1000000;
+    its.it_interval.tv_sec = its.it_value.tv_sec;
+    its.it_interval.tv_nsec = its.it_value.tv_nsec;
+
+    timer_settime(timer_id, 0, &its, NULL);
+}
+
+// Adding task to scheduler (sorted insertion)
+void add_task(void (*task_func)(void), uint8_t priority) {
+    if (task_index < MAX_TASKS) {
         task_list[task_index].task_func = task_func;
         task_list[task_index].priority = priority;
         task_list[task_index].state = TASK_READY;
-
         task_index++;
 
-        for (int index_val = NULL; index_val < task_index - 1; index_val++)    // Sort tasks based on priority after each addition : Bubble sort
-        {
-            for (int sort_val = index_val + 1; sort_val < task_index; sort_val++) 
-            {
-                if (task_list[index_val].priority > task_list[sort_val].priority) 
-                {
-                    tcb_t temp = task_list[index_val];                      // Swap the tasks
-                    task_list[index_val] = task_list[sort_val];
-                    task_list[sort_val] = temp;
-                }
-            }
-        }
-    } 
-    
-    else 
-    {
-        printf("Task list is full!\n");
+        // Sort tasks based on priority
+        qsort(task_list, task_index, sizeof(tcb_t), compare_tasks);
+    } else {
+        printf("Task list full!\n");
     }
 }
 
-void start_scheduler() 
-{
-    while (1) 
-    {
-        // Find the next ready task with the highest priority (lowest priority value)
-        for (int task_val = NULL; task_val < task_index; task_val++) 
-        {
-            if (task_list[task_val].state == TASK_READY) 
-            {
-                task_list[task_val].state = TASK_RUNNING;
-                task_list[task_val].task_func();
-                task_list[task_val].state = TASK_READY; // Set task back to ready after execution
-            }
-        }
-    }
-}
-
-// Example tasks
-void task1() {
-    printf("Task 1 is running\n");
-}
-
-void task2() {
-    printf("Task 2 is running\n");
-}
-
-void task3() {
-    printf("Task 3 is running\n");
-}
-
+// Main function
 int main() {
-    init_scheduler();
-    add_task(task3, 2);  // Task with priority 2
-    add_task(task1, 3);  // Task with priority 3
-    add_task(task2, 1);  // Task with priority 1
+    signal(SIGALRM, scheduler);
+
+    add_task(task3, 2);
+    add_task(task2, 1); // Highest priority (lower number)
+    add_task(task1, 3);
 
     printf("Starting scheduler...\n");
-    start_scheduler();
+
+    start_timer(100); // Timer interval in ms
+
+    while (1) { sleep(1); } // Keep main thread alive
 
     return 0;
 }
